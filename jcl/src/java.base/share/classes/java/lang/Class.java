@@ -25,18 +25,12 @@ package java.lang;
 import java.io.InputStream;
 import java.security.AccessControlContext;
 import java.security.ProtectionDomain;
-import java.security.AllPermission;
 import java.security.Permissions;
-/*[IF Java12]*/
-import java.lang.constant.ClassDesc;
-/*[ENDIF] Java12*/
 import java.lang.reflect.*;
 import java.net.URL;
 import java.lang.annotation.*;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -3556,7 +3550,13 @@ private native String getSimpleNameImpl();
  * 
  * @see #isAnonymousClass()
  */
+@CallerSensitive
 public String getSimpleName() {
+	String cachedSimpleName = lookupCachedSimpleName();
+	if (cachedSimpleName != null) {
+		return cachedSimpleName;
+	}
+
 	int arrayCount = 0;
 	Class<?> baseType = this;
 	if (isArray()) {
@@ -3621,7 +3621,7 @@ public String getSimpleName() {
 		}
 		return result.toString();
 	}
-	return simpleName;
+	return cacheSimpleName(simpleName);
 }
 
 /**
@@ -3636,7 +3636,13 @@ public String getSimpleName() {
  * @see #isAnonymousClass()
  * @see #isLocalClass()
  */
+@CallerSensitive
 public String getCanonicalName() {
+	String cachedCanonicalName = lookupCachedCanonicalName();
+	if (cachedCanonicalName != null) {
+		return cachedCanonicalName;
+	}
+
 	int arrayCount = 0;
 	Class<?> baseType = this;
 	if (isArray()) {
@@ -3675,7 +3681,7 @@ public String getCanonicalName() {
 		}
 		return result.toString();
 	}
-	return canonicalName;
+	return cacheCanonicalName(canonicalName);
 }
 
 /**
@@ -4060,6 +4066,9 @@ private static final class CacheKey {
 		return new CacheKey("#m" + methodName, parameterTypes, null);	//$NON-NLS-1$
 	}
 
+	static final CacheKey ClassCanonicalNameKey = new CacheKey("CanonicalName", EmptyParameters, null); //$NON-NLS-1$
+	static final CacheKey ClassSimpleNameKey = new CacheKey("SimpleName", EmptyParameters, null); //$NON-NLS-1$
+
 	static final CacheKey PublicConstructorsKey = new CacheKey("/c", EmptyParameters, null); //$NON-NLS-1$
 	static final CacheKey PublicFieldsKey = newFieldKey("/f", null); //$NON-NLS-1$
 	static final CacheKey PublicMethodsKey = new CacheKey("/m", EmptyParameters, null); //$NON-NLS-1$
@@ -4250,6 +4259,60 @@ private ReflectCache peekReflectCache() {
 
 static InternalError newInternalError(Exception cause) {
 	return new InternalError(cause);
+}
+
+private String lookupCachedCanonicalName() {
+	return lookupCachedStringValue(CacheKey.ClassCanonicalNameKey);
+}
+
+private String lookupCachedSimpleName() {
+	return lookupCachedStringValue(CacheKey.ClassSimpleNameKey);
+}
+
+private String lookupCachedStringValue(CacheKey cacheKey) {
+	if (!reflectCacheEnabled) {
+		return null;
+	}
+	if (reflectCacheDebug) {
+		reflectCacheDebugHelper(null, 0, "lookup cached ", cacheKey.name, " for class: ", getName()); //$NON-NLS-1$ //$NON-NLS-2$
+	}
+
+	ReflectCache cache = peekReflectCache();
+	if (cache != null) {
+		return (String) cache.find(cacheKey);
+	}
+	return null;
+}
+
+@CallerSensitive
+private String cacheCanonicalName(String canonicalName) {
+	return cacheStringValue(CacheKey.ClassCanonicalNameKey, canonicalName);
+}
+
+@CallerSensitive
+private String cacheSimpleName(String simpleName) {
+	return cacheStringValue(CacheKey.ClassSimpleNameKey, simpleName);
+}
+
+@CallerSensitive
+private String cacheStringValue(CacheKey cacheKey, String value) {
+	if (!reflectCacheEnabled) {
+		return value;
+	}
+	if (reflectCacheAppOnly && ClassLoader.getStackClassLoader(2) == ClassLoader.bootstrapClassLoader) {
+		return value;
+	}
+	if (reflectCacheDebug) {
+		reflectCacheDebugHelper(null, 0, "cache ", cacheKey.name, " for class: ", getName()); //$NON-NLS-1$ //$NON-NLS-2$
+	}
+
+	ReflectCache cache = acquireReflectCache();
+	try {
+		cache.insert(cacheKey, value);
+	} finally {
+		cache.release();
+	}
+	return value;
 }
 
 private Method lookupCachedMethod(String methodName, Class<?>[] parameters) {
